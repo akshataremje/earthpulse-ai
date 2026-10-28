@@ -1,0 +1,274 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BrainCircuit, Check, ChevronDown, CloudLightning, CloudRain, Droplets, Globe2, Leaf, LocateFixed, Map, MapPin, Menu, MessageCircle, Navigation, RefreshCw, Recycle, Send, ShieldCheck, Sparkles, Sprout, ThermometerSun, Wind, X, UserRound, Waves, TreePine, Eye, LogIn, UserPlus, Search, ExternalLink, Gauge, Clock3 } from 'lucide-react';
+import './App.css';
+import { auth as firebaseAuth } from './firebase';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+  onAuthStateChanged,
+  signOut
+} from 'firebase/auth';
+
+const locations = {
+  'Ratnagiri, Maharashtra': { lat: 16.9902, lon: 73.3120 },
+  'Mumbai, Maharashtra': { lat: 19.0760, lon: 72.8777 },
+  'Pune, Maharashtra': { lat: 18.5204, lon: 73.8567 },
+  'Sindhudurg, Maharashtra': { lat: 16.0000, lon: 73.5000 },
+  'Goa, India': { lat: 15.2993, lon: 74.1240 },
+};
+const nav = [
+  { id:'Home', label:'Home', icon:Leaf }, { id:'Map & Location', label:'Map & Location', icon:Map },
+  { id:'Weather & Risk', label:'Weather & Risk', icon:CloudLightning }, { id:'AI Analyse', label:'AI Analyse', icon:BrainCircuit },
+  { id:'Eco Assistant', label:'Eco Assistant', icon:MessageCircle }, { id:'Village Monitor', label:'Village Monitor', icon:MapPin },
+  { id:'Future Simulator', label:'Future Simulator', icon:Activity }, { id:'Waste-to-Worth', label:'Waste-to-Worth', icon:Recycle },
+  { id:'Community EcoReport', label:'Community EcoReport', icon:Sprout }, { id:'Change Detector', label:'Change Detector', icon:Eye },
+];
+const fmt = (n, unit='') => Number.isFinite(n) ? `${Math.round(n*10)/10}${unit}` : '—';
+
+export default function App(){
+  const [page,setPage] = useState('Home');
+  const [location,setLocation] = useState('Ratnagiri, Maharashtra');
+  const [coords,setCoords] = useState(locations['Ratnagiri, Maharashtra']);
+  const [weather,setWeather] = useState(null);
+  const [weatherLoading,setWeatherLoading] = useState(false);
+  const [weatherError,setWeatherError] = useState('');
+  const [menuOpen,setMenuOpen] = useState(false);
+  const [auth,setAuth] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  useEffect(() => {
+  const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+    setCurrentUser(user);
+  });
+
+  return () => unsubscribe();
+}, []);
+  const [authMessage,setAuthMessage] = useState('');
+  const [issue,setIssue] = useState('Flooding / heavy rainfall');
+  const [severity,setSeverity] = useState('Moderate');
+  const [details,setDetails] = useState('Heavy rain near a stream or low-lying road');
+  const [analysis,setAnalysis] = useState(null);
+  const [messages,setMessages] = useState([{from:'bot',text:'Hi! I’m EarthPulse Eco Assistant 🌿 Ask me about weather, flooding, wind, water or waste.'}]);
+  const [chatInput,setChatInput] = useState('');
+  const [chatOpen,setChatOpen] = useState(true);
+  const [search,setSearch] = useState('');
+  const [toast,setToast] = useState('');
+  const [savedActions,setSavedActions] = useState(() => { try { return JSON.parse(localStorage.getItem('earthpulse_saved_actions') || '[]'); } catch { return []; } });
+  useEffect(() => { try { localStorage.setItem('earthpulse_saved_actions', JSON.stringify(savedActions)); } catch {} }, [savedActions]);
+  const saveAction = (title, description) => {
+    const exists = savedActions.some(a => a.title === title);
+    if (exists) { setToast('This action is already saved on this device.'); return; }
+    setSavedActions(prev => [...prev, { title, description, savedAt: new Date().toISOString() }]);
+    setToast(`${title} saved on this device.`);
+  };
+
+  const fetchWeather = async (point=coords, label=location) => {
+    setWeatherLoading(true); setWeatherError('');
+    try {
+      const url=`https://api.open-meteo.com/v1/forecast?latitude=${point.lat}&longitude=${point.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,showers,weather_code,wind_speed_10m,wind_gusts_10m&hourly=precipitation_probability,precipitation&daily=precipitation_probability_max,wind_speed_10m_max,precipitation_sum&forecast_days=1&timezone=auto`;
+      const r=await fetch(url); if(!r.ok) throw new Error('Weather feed unavailable'); const d=await r.json(); setWeather(d); setWeatherError('');
+    } catch(e){ setWeatherError('Live weather could not load. Check your internet and try again.'); } finally {setWeatherLoading(false);}
+  };
+  useEffect(()=>{fetchWeather(coords,location);},[]);
+  useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),2800);return()=>clearTimeout(t)},[toast]);
+  const current=weather?.current;
+  const rainProb=weather?.daily?.precipitation_probability_max?.[0] ?? weather?.hourly?.precipitation_probability?.[0] ?? 0;
+  const windRisk=current?.wind_gusts_10m>=60?'High':current?.wind_gusts_10m>=35?'Moderate':'Low';
+  const floodRisk=rainProb>=70?'High':rainProb>=35?'Moderate':'Low';
+  const rainNow=current?.rain ?? current?.precipitation ?? 0;
+  const rainToday=weather?.daily?.precipitation_sum?.[0] ?? 0;
+  const hourlyRain=(weather?.hourly?.time || []).slice(0,12).map((time,i)=>({time,mm:weather?.hourly?.precipitation?.[i] ?? 0,prob:weather?.hourly?.precipitation_probability?.[i] ?? 0}));
+  const riskPercent=(level)=>level==='High'?88:level==='Moderate'?56:22;
+  const weatherText = current?.weather_code>=95?'Thunderstorm':current?.weather_code>=61?'Rain likely':current?.weather_code>=3?'Cloudy':'Partly cloudy';
+  const useMyLocation=()=>{
+    if(!navigator.geolocation){setToast('Location access is not supported by this browser.');return;}
+    setToast('Requesting location permission…');
+    navigator.geolocation.getCurrentPosition(async p=>{
+      const pt={lat:p.coords.latitude,lon:p.coords.longitude};setCoords(pt);setLocation('My current location');setToast('Location found! Loading local weather.');fetchWeather(pt,'My current location');setPage('Map & Location');
+    },err=>setToast(err.code===1?'Location permission denied. Allow it in browser settings.':'Could not get location. Select a preset instead.'),{enableHighAccuracy:true,timeout:10000});
+  };
+  const changeLocation=(label)=>{setLocation(label);const pt=locations[label];if(pt){setCoords(pt);fetchWeather(pt,label);}setToast(`Location changed to ${label}`)};
+  const runAnalysis=()=>{
+    const risk=issue.includes('Flood')||issue.includes('rain') ? floodRisk : issue.includes('wind')||issue.includes('Cyclone') ? windRisk : severity;
+    const advice=issue.toLowerCase().includes('flood')||issue.toLowerCase().includes('rain')?['Avoid walking or driving through floodwater.','Move away from riverbanks and low-lying areas if water rises.','Follow local administration and IMD alerts.']:issue.toLowerCase().includes('wind')||issue.toLowerCase().includes('cyclone')?['Secure loose outdoor objects and stay away from trees and power lines.','Avoid the coast during official high-wind or cyclone warnings.','Follow IMD and district disaster-management updates.']:issue.toLowerCase().includes('water')?['Use a verified source for drinking water until quality is confirmed.','Report unusual colour, smell or discharge to the local authority.','Arrange water testing through an authorised lab.']:['Separate wet and dry waste at source.','Record the location and date of the environmental change.','Share the issue with the village committee or relevant local authority.'];
+    setAnalysis({issue,risk,advice,disclaimer:'Prototype screening only. This is not an official warning or a substitute for expert assessment.'});
+  };
+  const sendChat=()=>{const q=chatInput.trim();if(!q)return;let reply='I can help with local weather, wind, rainfall, flooding, water safety and waste. Tell me the location and what you observed.';const s=q.toLowerCase();if(s.includes('flood')||s.includes('rain'))reply='For possible flooding: stay away from flowing water and low-lying routes, never cross floodwater, and follow official district/IMD alerts. The dashboard rain indicator is only a screening signal.';else if(s.includes('wind')||s.includes('storm')||s.includes('cyclone'))reply='For strong winds: secure loose items if safe, stay away from trees and power lines, and follow official IMD and district warnings. Do not rely on this prototype as an emergency alert.';else if(s.includes('water'))reply='If drinking water looks or smells unusual, use a verified safe source until it is tested. Contact your local water authority or an authorised testing lab.';else if(s.includes('waste')||s.includes('garbage'))reply='Try separating wet, dry and hazardous waste. Keep waste out of drains and streams, and report repeated dumping to the local body.';else if(s.includes('weather'))reply=`Current feed for ${location}: ${current?fmt(current.temperature_2m,'°C')+', wind '+fmt(current.wind_speed_10m,' km/h')+', rain probability '+rainProb+'%':'not loaded yet'}. For emergencies, verify official alerts.`;setMessages(m=>[...m,{from:'user',text:q},{from:'bot',text:reply}]);setChatInput('');};
+  const quickCards=[{title:'Map & Location',sub:'Explore local hotspots',icon:MapPin,cls:'mint',page:'Map & Location'},{title:'Weather & Risk',sub:'Wind, rain and risk signals',icon:CloudLightning,cls:'blue',page:'Weather & Risk'},{title:'AI Analyse',sub:'Turn observations into actions',icon:BrainCircuit,cls:'purple',page:'AI Analyse'},{title:'Eco Assistant',sub:'Ask environmental questions',icon:MessageCircle,cls:'teal',page:'Eco Assistant'}];
+  const visibleNav=nav.filter(n=>n.label.toLowerCase().includes(search.toLowerCase()));
+  const mapUrl=`https://www.openstreetmap.org/export/embed.html?bbox=${(coords.lon-.12)}%2C${(coords.lat-.09)}%2C${(coords.lon+.12)}%2C${(coords.lat+.09)}&layer=mapnik&marker=${coords.lat}%2C${coords.lon}`;
+
+  const header=<header className="topbar"><div className="welcome"><span className="mini-leaf"><Leaf size={21}/></span><div><b>Welcome to EarthPulse AI</b><small>Smart insights for a healthier planet</small></div></div><div className="top-actions"><label className="searchbox"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search village, location, or feature…"/></label><button className="icon-button notification" onClick={()=>setToast('You are all caught up!')} aria-label="Notifications"><Bell size={20}/><i/></button><button
+  className="profile"
+  onClick={async () => {
+    if (!currentUser) {
+      setAuth('signin');
+      return;
+    }
+
+    try {
+      await signOut(firebaseAuth);
+      setToast('Signed out successfully.');
+    } catch {
+      setToast('Could not sign out. Please try again.');
+    }
+  }}
+>
+  <span>EP</span>
+  <b>{currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Guest'}</b>
+  <ChevronDown size={14}/>
+</button></div></header>;
+  const weatherCard=<section className="weather-card glass"><div className="card-top"><div><span className="eyebrow"><MapPin size={13}/> LIVE WEATHER FEED</span><h3>{location}</h3></div><span className="live-pill"><i/> Live</span></div><div className="weather-main"><div className="sun-cloud"><span>☀️</span><CloudRain size={38}/></div><div><strong>{current?fmt(current.temperature_2m,'°C'):'—'}</strong><p>{weatherText}</p></div><div className="weather-details"><div><Wind size={15}/> Wind <b>{current?fmt(current.wind_speed_10m,' km/h'):'—'}</b></div><div><Droplets size={15}/> Humidity <b>{current?fmt(current.relative_humidity_2m,'%'):'—'}</b></div><div><CloudRain size={15}/> Rain chance <b>{rainProb}%</b></div></div></div><div className="risk-row"><div className={`risk-chip ${windRisk.toLowerCase()}`}><Wind size={18}/><span><b>{windRisk} Wind Risk</b><small>{current?fmt(current.wind_gusts_10m,' km/h'):'—'} gusts</small></span></div><div className={`risk-chip ${floodRisk.toLowerCase()}`}><Waves size={18}/><span><b>{floodRisk} Rain/Flood Signal</b><small>{rainProb}% rain probability</small></span></div></div>{weatherError&&<p className="error-note">{weatherError}</p>}<div className="weather-footer"><span><Clock3 size={13}/> {current?.time?new Date(current.time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'Waiting for feed'}</span><button className="text-button" onClick={()=>fetchWeather() }><RefreshCw size={13} className={weatherLoading?'spin':''}/> {weatherLoading?'Updating':'Refresh'}</button></div></section>;
+
+  const mapCard=<section className="panel map-panel"><div className="panel-heading"><div><span className="eyebrow"><MapPin size={14}/> LOCATION INTELLIGENCE</span><h3>Village map</h3></div><span className="live-pill"><i/> Map ready</span></div><div className="map-frame"><iframe title="Interactive OpenStreetMap" src={mapUrl} loading="lazy"/><div className="map-overlay"><span className="map-tag"><MapPin size={13}/>{location}</span><button onClick={useMyLocation}><LocateFixed size={15}/> Locate me</button></div><div className="map-legend"><span><i className="dot green"/> Selected location</span><span><i className="dot orange"/> Risk screening</span></div></div><div className="map-bottom"><div><b>Explore your area</b><small>Pan and zoom the map to inspect nearby places.</small></div><button className="outline-button" onClick={()=>window.open(`https://www.openstreetmap.org/?mlat=${coords.lat}&mlon=${coords.lon}#map=13/${coords.lat}/${coords.lon}`,'_blank','noopener,noreferrer')}>Open full map <ExternalLink size={14}/></button></div></section>;
+
+  const pulse=<section className="panel pulse-panel"><div className="panel-heading"><div><span className="eyebrow"><Activity size={14}/> COMMUNITY SNAPSHOT</span><h3>Environmental pulse</h3></div><span className="live-pill"><i/> Demo indicators</span></div><div className="gauges"><div className="gauge"><div className="gauge-ring water"><Droplets size={24}/><b>68%</b></div><b>Water</b><small>Monitor quality</small></div><div className="gauge"><div className="gauge-ring crops"><Sprout size={24}/><b>42%</b></div><b>Crop health</b><small>Needs attention</small></div><div className="gauge"><div className="gauge-ring green-cover"><TreePine size={24}/><b>85%</b></div><b>Green cover</b><small>Demo estimate</small></div></div><div className="alerts-title"><b><AlertTriangle size={15}/> Risk signals</b><button className="text-button" onClick={()=>setPage('Weather & Risk')}>View details <ArrowRight size={13}/></button></div><div className="alert-list"><button onClick={()=>setPage('Weather & Risk')}><span className="alert-icon red"><Waves size={16}/></span><span><b>{floodRisk} rainfall signal</b><small>Check low-lying areas and official alerts</small></span><ArrowRight size={15}/></button><button onClick={()=>setPage('Weather & Risk')}><span className="alert-icon amber"><Wind size={16}/></span><span><b>{windRisk} wind signal</b><small>Current gusts: {current?fmt(current.wind_gusts_10m,' km/h'):'—'}</small></span><ArrowRight size={15}/></button><button onClick={()=>setPage('Community EcoReport')}><span className="alert-icon green"><Sprout size={16}/></span><span><b>Community observation</b><small>Record a local environmental change</small></span><ArrowRight size={15}/></button></div></section>;
+
+  const assistant=<section className="panel assistant-panel"><div className="panel-heading"><div className="assistant-title"><div className="bot-avatar"><BrainCircuit size={22}/></div><div><h3>Eco Assistant</h3><small>Guided environmental helper</small></div></div><span className="online-pill"><i/> Online</span></div><div className="chat-intro"><b>Hello, explorer! <span>🌱</span></b><p>Ask about weather, risk signals, water safety or eco-friendly actions.</p></div><div className="chat-messages">{messages.slice(-4).map((m,i)=><div key={i} className={`bubble ${m.from}`}>{m.text}</div>)}</div><div className="suggestions">{['Is flooding a concern?','What should I do for strong winds?','How can I reduce waste?'].map(q=><button key={q} onClick={()=>{setChatInput(q);}}>{q}</button>)}</div><form className="chat-form" onSubmit={e=>{e.preventDefault();sendChat()}}><input value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder="Ask your eco question…"/><button aria-label="Send message"><Send size={17}/></button></form><small className="prototype-note">Guided prototype responses · Verify urgent information with official sources.</small></section>;
+
+  const home=<><section className="hero-grid"><div className="hero-banner"><div className="hero-copy"><span className="hero-kicker"><Sparkles size={14}/> ENVIRONMENTAL INTELLIGENCE</span><h1>The Earth’s health,<br/><em>our priority.</em></h1><p>Know your village. Understand local signals. Take action for a safer, greener future.</p><div className="hero-actions"><button className="primary-button" onClick={()=>setPage('Map & Location')}>Explore your village <ArrowRight size={17}/></button><button className="ghost-button" onClick={()=>setPage('AI Analyse')}><BrainCircuit size={17}/> Analyse an issue</button></div><div className="hero-proof"><span><Check size={14}/> Village-first design</span><span><Check size={14}/> Weather-connected</span></div></div><div className="earth-wrap"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="earth"><div className="earth-shine"/></div><span className="float-leaf leaf-a"><Leaf size={24}/></span><span className="float-leaf leaf-b"><Leaf size={18}/></span><span className="float-star star-a">✦</span><span className="float-star star-b">✧</span></div><div className="hero-bottom-glow"/></div>{weatherCard}</section><section className="quick-grid">{quickCards.map((c,i)=><button key={c.title} className={`quick-card ${c.cls}`} style={{'--delay':`${i*90}ms`}} onClick={()=>setPage(c.page)}><span className="quick-icon"><c.icon size={23}/></span><span className="quick-copy"><b>{c.title}</b><small>{c.sub}</small></span><ArrowUpRight className="quick-arrow" size={18}/></button>)}</section><section className="content-grid">{mapCard}{pulse}{assistant}</section><section className="bottom-banner"><div className="banner-leaf"><Leaf size={29}/></div><b>Small actions. Big changes.</b><span>Save nature <Leaf size={16}/> Save future</span><button onClick={()=>setPage('Waste-to-Worth')}>Discover eco actions <ArrowRight size={15}/></button></section></>;
+
+  const modulePage=()=>{
+    if(page==='Map & Location'||page==='Village Monitor')return <div className="module-layout"><div className="module-intro"><span className="eyebrow"><MapPin size={14}/> YOUR COMMUNITY</span><h1>Map & Location</h1><p>Explore your selected location and use browser location permission to check local conditions.</p><div className="location-tools"><label><span>Monitoring location</span><select value={location in locations?location:'Ratnagiri, Maharashtra'} onChange={e=>changeLocation(e.target.value)}>{Object.keys(locations).map(x=><option key={x}>{x}</option>)}</select></label><button className="primary-button" onClick={useMyLocation}><LocateFixed size={17}/> Use my location</button></div><div className="location-coords"><MapPin size={15}/> {coords.lat.toFixed(4)}, {coords.lon.toFixed(4)} <span>Approximate map centre</span></div></div><div className="full-map">{mapCard}</div></div>;
+    if(page==='Weather & Risk')return <div className="module-layout"><div className="module-intro"><span className="eyebrow"><CloudLightning size={14}/> WEATHER INTELLIGENCE</span><h1>Weather & Risk</h1><p>Live forecast signals for {location}. Monitor rainfall, wind gusts and preliminary risk indicators in one place.</p><div className="weather-heading-actions"><span className="live-pill"><i/> Open-Meteo feed</span><button className="outline-button" onClick={()=>fetchWeather()}><RefreshCw size={15} className={weatherLoading?'spin':''}/> {weatherLoading?'Refreshing…':'Refresh forecast'}</button></div></div><div className="weather-module-grid">{weatherCard}<div className="panel advice-panel"><h3><ShieldCheck size={19}/> Stay prepared</h3><div className="advice-item"><Wind/><div><b>Strong wind</b><p>Secure loose outdoor objects if safe. Keep away from trees and power lines during strong winds.</p></div></div><div className="advice-item"><Waves/><div><b>Heavy rainfall / flooding</b><p>Avoid floodwater and low-lying routes. Never cross flowing water; follow district and IMD alerts.</p></div></div><p className="disclaimer">These are preliminary weather-based screening signals, not official warnings. Check IMD and district alerts.</p></div></div><div className="risk-dashboard-grid"><section className="panel risk-detail-panel"><div className="panel-heading"><div><span className="eyebrow"><Activity size={14}/> LIVE RISK SCREENING</span><h3>Risk overview</h3></div><span className="soft-tag">Based on forecast</span></div><div className="risk-meter-row"><div className="risk-meter-icon wind-tone"><Wind size={21}/></div><div className="risk-meter-main"><div className="risk-meter-label"><b>Wind / gusts</b><strong className={windRisk.toLowerCase()}>{windRisk}</strong></div><div className="meter-track"><span className={windRisk.toLowerCase()} style={{width:`${riskPercent(windRisk)}%`}}/></div><small>Current wind {current?fmt(current.wind_speed_10m,' km/h'):'—'} · Gusts {current?fmt(current.wind_gusts_10m,' km/h'):'—'}</small></div></div><div className="risk-meter-row"><div className="risk-meter-icon rain-tone"><CloudRain size={21}/></div><div className="risk-meter-main"><div className="risk-meter-label"><b>Rain probability</b><strong className={floodRisk.toLowerCase()}>{floodRisk}</strong></div><div className="meter-track"><span className={floodRisk.toLowerCase()} style={{width:`${rainProb}%`}}/></div><small>{rainProb}% chance · {fmt(rainToday,' mm')} forecast precipitation today</small></div></div><div className="risk-meter-row"><div className="risk-meter-icon flood-tone"><Waves size={21}/></div><div className="risk-meter-main"><div className="risk-meter-label"><b>Flood screening signal</b><strong className={floodRisk.toLowerCase()}>{floodRisk}</strong></div><div className="meter-track"><span className={floodRisk.toLowerCase()} style={{width:`${riskPercent(floodRisk)}%`}}/></div><small>Rain forecast is not a flood prediction; local drainage, terrain and river levels matter.</small></div></div></section><section className="panel rainfall-panel"><div className="panel-heading"><div><span className="eyebrow"><Droplets size={14}/> PRECIPITATION</span><h3>Next 12 hours</h3></div><span className="rain-total">{fmt(rainToday,' mm')} today</span></div><div className="rain-chart">{hourlyRain.map((h,i)=><div className="rain-column" key={h.time} title={`${new Date(h.time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}: ${h.mm} mm rain, ${h.prob}% chance`}><span className="rain-bar-wrap"><i style={{height:`${Math.max(4,Math.min(100,h.prob))}%`}}/></span><small>{new Date(h.time).toLocaleTimeString([], {hour:'2-digit'})}</small></div>)}</div><div className="rain-chart-legend"><span><i/> Rain probability by hour</span><b>Current rain: {fmt(rainNow,' mm')}</b></div><p className="disclaimer">Hourly forecast may change. A low probability does not guarantee dry conditions.</p></section></div></div>;
+    if(page==='AI Analyse')return <div className="module-layout"><div className="module-intro"><span className="eyebrow"><BrainCircuit size={14}/> ECO-DETECTIVE</span><h1>AI Analyse</h1><p>Describe an environmental observation to get structured, practical next steps.</p></div><div className="panel analysis-panel"><div className="form-grid"><label>Environmental issue<select value={issue} onChange={e=>setIssue(e.target.value)}><option>Flooding / heavy rainfall</option><option>Strong wind / cyclone</option><option>Water quality concern</option><option>Waste dumping</option><option>Tree cover change</option></select></label><label>Observed severity<select value={severity} onChange={e=>setSeverity(e.target.value)}><option>Low</option><option>Moderate</option><option>High</option></select></label><label className="wide-field">What did you observe?<textarea value={details} onChange={e=>setDetails(e.target.value)} rows="3" placeholder="Describe location and observations…"/></label></div><button className="primary-button" onClick={runAnalysis}><Sparkles size={17}/> Analyse observation</button>{analysis&&<div className="analysis-result"><div className="result-heading"><span className="quick-icon purple"><BrainCircuit/></span><div><span className="eyebrow">ANALYSIS SUMMARY</span><h3>{analysis.issue}</h3></div><span className={`risk-badge ${analysis.risk.toLowerCase()}`}>{analysis.risk} signal</span></div><p>{details||'No additional observation provided.'}</p><h4>Suggested next steps</h4><ol>{analysis.advice.map(a=><li key={a}>{a}</li>)}</ol><small>{analysis.disclaimer}</small></div>}<p className="prototype-note">This is a guided rule-based prototype, not a medical, engineering or official disaster assessment.</p></div></div>;
+    if(page==='Eco Assistant')return <div className="module-layout"><div className="module-intro"><span className="eyebrow"><MessageCircle size={14}/> ASK EARTHPULSE</span><h1>Eco Assistant</h1><p>Ask practical questions about local environment and preparedness.</p></div><div className="panel full-assistant">{assistant}</div></div>;
+    const info={ 'Future Simulator':{icon:Activity,title:'Future Simulator',desc:'Explore how everyday actions can support a greener village.',items:[['Rainwater harvesting','Can help reduce pressure on water supplies when designed and maintained well.'],['Waste segregation','Makes recycling and composting easier and reduces mixed waste.'],['Tree and mangrove care','Locally appropriate native planting can support biodiversity and coastal resilience.']]},'Waste-to-Worth':{icon:Recycle,title:'Waste-to-Worth',desc:'Simple ideas to turn waste into useful resources.',items:[['Wet waste','Compost food and garden waste where safe and practical.'],['Dry recyclables','Keep paper, metal, glass and accepted plastics clean and separated.'],['Community clean-up','Keep waste out of drains, streams and coastal areas.']]},'Community EcoReport':{icon:Sprout,title:'Community EcoReport',desc:'Create a local observation for your team to review.',items:[['Water concern','Record approximate location, date and what you observed.'],['Waste hotspot','Note repeated dumping locations without confronting anyone.'],['Green cover change','Record visible changes over time from a consistent viewpoint.']]},'Change Detector':{icon:Eye,title:'Change Detector',desc:'Compare observations over time to identify changes that may need attention.',items:[['Water level','Compare dated observations from a safe viewing point.'],['Vegetation','Use consistent viewpoints and dates for comparisons.'],['Coastal / drainage area','Report erosion or blocked drains to local authorities.']]}};
+    const data=info[page]||info['Future Simulator'];const Icon=data.icon;
+    return <div className="module-layout"><div className="module-intro"><span className="eyebrow"><Sparkles size={14}/> COMMUNITY ACTION</span><h1>{data.title}</h1><p>{data.desc}</p><p className="saved-count">Saved actions on this device: <b>{savedActions.length}</b></p>{savedActions.length>0&&<div className="saved-actions-list"><h3>Your saved actions</h3>{savedActions.map(a=><div className="saved-action-row" key={a.title}><span><b>{a.title}</b><small>{a.description}</small></span><button className="text-button" onClick={()=>{setSavedActions(prev=>prev.filter(x=>x.title!==a.title));setToast(`${a.title} removed from saved actions.`)}}>Remove</button></div>)}</div>}</div><div className="feature-grid">{data.items.map(([t,d],i)=><article className="feature-tile" key={t} style={{'--delay':`${i*100}ms`}}><span className="feature-number">0{i+1}</span><span className="feature-icon"><Icon size={22}/></span><h3>{t}</h3><p>{d}</p><button className="text-button" onClick={()=>saveAction(t,d)}>Explore action <ArrowRight size={14}/></button></article>)}</div></div>;
+  };
+
+  return <div className="app-shell"><aside className={`sidebar ${menuOpen?'open':''}`}><div className="brand"><div className="brand-mark"><Leaf size={29}/><Sparkles size={11} className="brand-sparkle"/></div><div><b>EarthPulse <span>AI</span></b><small>VILLAGE INTELLIGENCE</small></div><button className="close-sidebar" onClick={()=>setMenuOpen(false)}><X/></button></div><div className="side-label">WORKSPACE</div><nav>{visibleNav.map(n=><button key={n.id} className={`nav-item ${page===n.id?'active':''}`} onClick={()=>{setPage(n.id);setMenuOpen(false)}}><n.icon size={19}/><span>{n.label}</span>{page===n.id&&<span className="nav-active-dot"/>}</button>)}</nav><div className="sidebar-location"><div className="pin-bubble"><MapPin size={18}/></div><div><small>YOUR LOCATION</small><b>{location}</b></div><button onClick={useMyLocation} title="Use my location"><LocateFixed size={17}/></button></div><button className="side-bottom" onClick={()=>setPage('Community EcoReport')}><span className="side-bottom-icon"><Sprout size={22}/></span><span><b>Cleaner villages</b><small>Greener tomorrow</small></span><ArrowUpRight size={17}/></button><div className="sidebar-foot">NOVEX 2026 <span>•</span> TEAM THINKFORGE</div></aside><main className="main-area">{header}<div className="mobile-title"><button className="icon-button" onClick={()=>setMenuOpen(!menuOpen)}><Menu/></button><span>EarthPulse AI / <b>{page}</b></span></div><div className="page-content">{page==='Home'?home:modulePage()}</div><footer className="page-footer"><span>© EarthPulse AI · Village Intelligence</span><span><ShieldCheck size={13}/> Verify emergency information with official sources</span></footer></main>{menuOpen&&<button className="sidebar-scrim" onClick={()=>setMenuOpen(false)} aria-label="Close menu"/>}{toast&&<div className="toast"><Check size={17}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}{auth && (
+  <div
+    className="modal-backdrop"
+    onClick={() => {
+      setAuth('');
+      setAuthMessage('');
+    }}
+  >
+    <form
+      className="auth-modal"
+      onSubmit={async (e) => {
+        e.preventDefault();
+
+        const form = e.currentTarget;
+        const email = form.elements.email.value.trim();
+        const password = form.elements.password.value;
+        const fullName = form.elements.fullName?.value.trim();
+
+        setAuthMessage('');
+
+        try {
+          if (auth === 'signin') {
+            await signInWithEmailAndPassword(firebaseAuth, email, password);
+            setToast('Login successful!');
+          } else {
+            const result = await createUserWithEmailAndPassword(
+              firebaseAuth,
+              email,
+              password
+            );
+
+            if (fullName) {
+              await updateProfile(result.user, { displayName: fullName });
+            }
+
+            setToast('Account created successfully!');
+          }
+
+          setAuth('');
+          setAuthMessage('');
+        } catch (error) {
+          const messages = {
+            'auth/invalid-credential': 'Email or password is incorrect.',
+            'auth/email-already-in-use': 'This email is already registered. Try signing in.',
+            'auth/weak-password': 'Choose a stronger password (at least 6 characters).',
+            'auth/invalid-email': 'Please enter a valid email address.',
+            'auth/too-many-requests': 'Too many attempts. Please try again later.',
+            'auth/network-request-failed': 'Network error. Check your internet connection.',
+            'auth/operation-not-allowed': 'Email/password sign-in is not enabled in Firebase Authentication.',
+          };
+
+          setAuthMessage(
+            messages[error.code] || 'Authentication failed. Check your details and try again.'
+          );
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="modal-close"
+        onClick={() => {
+          setAuth('');
+          setAuthMessage('');
+        }}
+      >
+        <X />
+      </button>
+
+      <div className="auth-logo"><Leaf size={28} /></div>
+      <h2>{auth === 'signin' ? 'Welcome back' : 'Join EarthPulse AI'}</h2>
+      <p>
+        {auth === 'signin'
+          ? 'Sign in to your community workspace.'
+          : 'Create your EarthPulse AI account.'}
+      </p>
+
+      {auth === 'register' && (
+        <label>
+          Full name
+          <input name="fullName" required placeholder="Your name" autoComplete="name" />
+        </label>
+      )}
+
+      <label>
+        Email address
+        <input
+          name="email"
+          type="email"
+          required
+          placeholder="you@example.com"
+          autoComplete="email"
+        />
+      </label>
+
+      <label>
+        Password
+        <input
+          name="password"
+          type="password"
+          required
+          minLength={6}
+          placeholder="At least 6 characters"
+          autoComplete={auth === 'signin' ? 'current-password' : 'new-password'}
+        />
+      </label>
+
+      <button type="submit" className="primary-button auth-submit">
+        {auth === 'signin' ? <LogIn size={17} /> : <UserPlus size={17} />}
+        {auth === 'signin' ? 'Sign in' : 'Create account'}
+      </button>
+
+      {authMessage && <p className="auth-message" role="alert">{authMessage}</p>}
+
+      <small>
+        Your account is managed through Firebase Authentication.
+      </small>
+
+      <button
+        type="button"
+        className="switch-auth"
+        onClick={() => {
+          setAuth(auth === 'signin' ? 'register' : 'signin');
+          setAuthMessage('');
+        }}
+      >
+        {auth === 'signin'
+          ? 'New here? Create an account'
+          : 'Already registered? Sign in'}
+      </button>
+    </form>
+  </div>
+)}</div>
+}

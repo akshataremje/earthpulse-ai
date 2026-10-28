@@ -1,6 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BrainCircuit, Check, ChevronDown, CloudLightning, CloudRain, Droplets, Globe2, Leaf, LocateFixed, Map, MapPin, Menu, MessageCircle, Navigation, RefreshCw, Recycle, Send, ShieldCheck, Sparkles, Sprout, ThermometerSun, Wind, X, UserRound, Waves, TreePine, Eye, LogIn, UserPlus, Search, ExternalLink, Gauge, Clock3 } from 'lucide-react';
 import './App.css';
+import { auth as firebaseAuth } from './firebase';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+  onAuthStateChanged,
+  signOut
+} from 'firebase/auth';
 
 const locations = {
   'Ratnagiri, Maharashtra': { lat: 16.9902, lon: 73.3120 },
@@ -27,6 +35,14 @@ export default function App(){
   const [weatherError,setWeatherError] = useState('');
   const [menuOpen,setMenuOpen] = useState(false);
   const [auth,setAuth] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  useEffect(() => {
+  const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+    setCurrentUser(user);
+  });
+
+  return () => unsubscribe();
+}, []);
   const [authMessage,setAuthMessage] = useState('');
   const [issue,setIssue] = useState('Flooding / heavy rainfall');
   const [severity,setSeverity] = useState('Moderate');
@@ -82,7 +98,26 @@ export default function App(){
   const visibleNav=nav.filter(n=>n.label.toLowerCase().includes(search.toLowerCase()));
   const mapUrl=`https://www.openstreetmap.org/export/embed.html?bbox=${(coords.lon-.12)}%2C${(coords.lat-.09)}%2C${(coords.lon+.12)}%2C${(coords.lat+.09)}&layer=mapnik&marker=${coords.lat}%2C${coords.lon}`;
 
-  const header=<header className="topbar"><div className="welcome"><span className="mini-leaf"><Leaf size={21}/></span><div><b>Welcome to EarthPulse AI</b><small>Smart insights for a healthier planet</small></div></div><div className="top-actions"><label className="searchbox"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search village, location, or feature…"/></label><button className="icon-button notification" onClick={()=>setToast('You are all caught up!')} aria-label="Notifications"><Bell size={20}/><i/></button><button className="profile" onClick={()=>setAuth('signin')}><span>EP</span><b>Guest</b><ChevronDown size={14}/></button></div></header>;
+  const header=<header className="topbar"><div className="welcome"><span className="mini-leaf"><Leaf size={21}/></span><div><b>Welcome to EarthPulse AI</b><small>Smart insights for a healthier planet</small></div></div><div className="top-actions"><label className="searchbox"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search village, location, or feature…"/></label><button className="icon-button notification" onClick={()=>setToast('You are all caught up!')} aria-label="Notifications"><Bell size={20}/><i/></button><button
+  className="profile"
+  onClick={async () => {
+    if (!currentUser) {
+      setAuth('signin');
+      return;
+    }
+
+    try {
+      await signOut(firebaseAuth);
+      setToast('Signed out successfully.');
+    } catch {
+      setToast('Could not sign out. Please try again.');
+    }
+  }}
+>
+  <span>EP</span>
+  <b>{currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Guest'}</b>
+  <ChevronDown size={14}/>
+</button></div></header>;
   const weatherCard=<section className="weather-card glass"><div className="card-top"><div><span className="eyebrow"><MapPin size={13}/> LIVE WEATHER FEED</span><h3>{location}</h3></div><span className="live-pill"><i/> Live</span></div><div className="weather-main"><div className="sun-cloud"><span>☀️</span><CloudRain size={38}/></div><div><strong>{current?fmt(current.temperature_2m,'°C'):'—'}</strong><p>{weatherText}</p></div><div className="weather-details"><div><Wind size={15}/> Wind <b>{current?fmt(current.wind_speed_10m,' km/h'):'—'}</b></div><div><Droplets size={15}/> Humidity <b>{current?fmt(current.relative_humidity_2m,'%'):'—'}</b></div><div><CloudRain size={15}/> Rain chance <b>{rainProb}%</b></div></div></div><div className="risk-row"><div className={`risk-chip ${windRisk.toLowerCase()}`}><Wind size={18}/><span><b>{windRisk} Wind Risk</b><small>{current?fmt(current.wind_gusts_10m,' km/h'):'—'} gusts</small></span></div><div className={`risk-chip ${floodRisk.toLowerCase()}`}><Waves size={18}/><span><b>{floodRisk} Rain/Flood Signal</b><small>{rainProb}% rain probability</small></span></div></div>{weatherError&&<p className="error-note">{weatherError}</p>}<div className="weather-footer"><span><Clock3 size={13}/> {current?.time?new Date(current.time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'Waiting for feed'}</span><button className="text-button" onClick={()=>fetchWeather() }><RefreshCw size={13} className={weatherLoading?'spin':''}/> {weatherLoading?'Updating':'Refresh'}</button></div></section>;
 
   const mapCard=<section className="panel map-panel"><div className="panel-heading"><div><span className="eyebrow"><MapPin size={14}/> LOCATION INTELLIGENCE</span><h3>Village map</h3></div><span className="live-pill"><i/> Map ready</span></div><div className="map-frame"><iframe title="Interactive OpenStreetMap" src={mapUrl} loading="lazy"/><div className="map-overlay"><span className="map-tag"><MapPin size={13}/>{location}</span><button onClick={useMyLocation}><LocateFixed size={15}/> Locate me</button></div><div className="map-legend"><span><i className="dot green"/> Selected location</span><span><i className="dot orange"/> Risk screening</span></div></div><div className="map-bottom"><div><b>Explore your area</b><small>Pan and zoom the map to inspect nearby places.</small></div><button className="outline-button" onClick={()=>window.open(`https://www.openstreetmap.org/?mlat=${coords.lat}&mlon=${coords.lon}#map=13/${coords.lat}/${coords.lon}`,'_blank','noopener,noreferrer')}>Open full map <ExternalLink size={14}/></button></div></section>;
@@ -103,5 +138,137 @@ export default function App(){
     return <div className="module-layout"><div className="module-intro"><span className="eyebrow"><Sparkles size={14}/> COMMUNITY ACTION</span><h1>{data.title}</h1><p>{data.desc}</p><p className="saved-count">Saved actions on this device: <b>{savedActions.length}</b></p>{savedActions.length>0&&<div className="saved-actions-list"><h3>Your saved actions</h3>{savedActions.map(a=><div className="saved-action-row" key={a.title}><span><b>{a.title}</b><small>{a.description}</small></span><button className="text-button" onClick={()=>{setSavedActions(prev=>prev.filter(x=>x.title!==a.title));setToast(`${a.title} removed from saved actions.`)}}>Remove</button></div>)}</div>}</div><div className="feature-grid">{data.items.map(([t,d],i)=><article className="feature-tile" key={t} style={{'--delay':`${i*100}ms`}}><span className="feature-number">0{i+1}</span><span className="feature-icon"><Icon size={22}/></span><h3>{t}</h3><p>{d}</p><button className="text-button" onClick={()=>saveAction(t,d)}>Explore action <ArrowRight size={14}/></button></article>)}</div></div>;
   };
 
-  return <div className="app-shell"><aside className={`sidebar ${menuOpen?'open':''}`}><div className="brand"><div className="brand-mark"><Leaf size={29}/><Sparkles size={11} className="brand-sparkle"/></div><div><b>EarthPulse <span>AI</span></b><small>VILLAGE INTELLIGENCE</small></div><button className="close-sidebar" onClick={()=>setMenuOpen(false)}><X/></button></div><div className="side-label">WORKSPACE</div><nav>{visibleNav.map(n=><button key={n.id} className={`nav-item ${page===n.id?'active':''}`} onClick={()=>{setPage(n.id);setMenuOpen(false)}}><n.icon size={19}/><span>{n.label}</span>{page===n.id&&<span className="nav-active-dot"/>}</button>)}</nav><div className="sidebar-location"><div className="pin-bubble"><MapPin size={18}/></div><div><small>YOUR LOCATION</small><b>{location}</b></div><button onClick={useMyLocation} title="Use my location"><LocateFixed size={17}/></button></div><button className="side-bottom" onClick={()=>setPage('Community EcoReport')}><span className="side-bottom-icon"><Sprout size={22}/></span><span><b>Cleaner villages</b><small>Greener tomorrow</small></span><ArrowUpRight size={17}/></button><div className="sidebar-foot">NOVEX 2026 <span>•</span> TEAM THINKFORGE</div></aside><main className="main-area">{header}<div className="mobile-title"><button className="icon-button" onClick={()=>setMenuOpen(!menuOpen)}><Menu/></button><span>EarthPulse AI / <b>{page}</b></span></div><div className="page-content">{page==='Home'?home:modulePage()}</div><footer className="page-footer"><span>© EarthPulse AI · Village Intelligence</span><span><ShieldCheck size={13}/> Verify emergency information with official sources</span></footer></main>{menuOpen&&<button className="sidebar-scrim" onClick={()=>setMenuOpen(false)} aria-label="Close menu"/>}{toast&&<div className="toast"><Check size={17}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}{auth&&<div className="modal-backdrop" onClick={()=>{setAuth('');setAuthMessage('')}}><form className="auth-modal" onSubmit={e=>{e.preventDefault();setAuthMessage('Form checked. To create real accounts, connect a secure authentication backend; this frontend alone cannot authenticate users.')}} onClick={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={()=>{setAuth('');setAuthMessage('')}}><X/></button><div className="auth-logo"><Leaf size={28}/></div><h2>{auth==='signin'?'Welcome back':'Join EarthPulse AI'}</h2><p>{auth==='signin'?'Sign in to your community workspace.':'Create a demo account to explore the workspace.'}</p>{auth==='register'&&<label>Full name<input required placeholder="Your name"/></label>}<label>Email address<input type="email" required placeholder="you@example.com"/></label><label>Password<input type="password" required minLength="6" placeholder="At least 6 characters"/></label><button className="primary-button auth-submit">{auth==='signin'?<LogIn size={17}/>:<UserPlus size={17}/>} {auth==='signin'?'Sign in':'Create account'}</button>{authMessage&&<p className="auth-message">{authMessage}</p>}<small>Account sign-in needs a secure authentication backend. This form does not create a real account.</small><button type="button" className="switch-auth" onClick={()=>{setAuth(auth==='signin'?'register':'signin');setAuthMessage('')}}>{auth==='signin'?"New here? Create an account":"Already registered? Sign in"}</button></form></div>}</div>
+  return <div className="app-shell"><aside className={`sidebar ${menuOpen?'open':''}`}><div className="brand"><div className="brand-mark"><Leaf size={29}/><Sparkles size={11} className="brand-sparkle"/></div><div><b>EarthPulse <span>AI</span></b><small>VILLAGE INTELLIGENCE</small></div><button className="close-sidebar" onClick={()=>setMenuOpen(false)}><X/></button></div><div className="side-label">WORKSPACE</div><nav>{visibleNav.map(n=><button key={n.id} className={`nav-item ${page===n.id?'active':''}`} onClick={()=>{setPage(n.id);setMenuOpen(false)}}><n.icon size={19}/><span>{n.label}</span>{page===n.id&&<span className="nav-active-dot"/>}</button>)}</nav><div className="sidebar-location"><div className="pin-bubble"><MapPin size={18}/></div><div><small>YOUR LOCATION</small><b>{location}</b></div><button onClick={useMyLocation} title="Use my location"><LocateFixed size={17}/></button></div><button className="side-bottom" onClick={()=>setPage('Community EcoReport')}><span className="side-bottom-icon"><Sprout size={22}/></span><span><b>Cleaner villages</b><small>Greener tomorrow</small></span><ArrowUpRight size={17}/></button><div className="sidebar-foot">NOVEX 2026 <span>•</span> TEAM THINKFORGE</div></aside><main className="main-area">{header}<div className="mobile-title"><button className="icon-button" onClick={()=>setMenuOpen(!menuOpen)}><Menu/></button><span>EarthPulse AI / <b>{page}</b></span></div><div className="page-content">{page==='Home'?home:modulePage()}</div><footer className="page-footer"><span>© EarthPulse AI · Village Intelligence</span><span><ShieldCheck size={13}/> Verify emergency information with official sources</span></footer></main>{menuOpen&&<button className="sidebar-scrim" onClick={()=>setMenuOpen(false)} aria-label="Close menu"/>}{toast&&<div className="toast"><Check size={17}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}{auth && (
+  <div
+    className="modal-backdrop"
+    onClick={() => {
+      setAuth('');
+      setAuthMessage('');
+    }}
+  >
+    <form
+      className="auth-modal"
+      onSubmit={async (e) => {
+        e.preventDefault();
+
+        const form = e.currentTarget;
+        const email = form.elements.email.value.trim();
+        const password = form.elements.password.value;
+        const fullName = form.elements.fullName?.value.trim();
+
+        setAuthMessage('');
+
+        try {
+          if (auth === 'signin') {
+            await signInWithEmailAndPassword(firebaseAuth, email, password);
+            setToast('Login successful!');
+          } else {
+            const result = await createUserWithEmailAndPassword(
+              firebaseAuth,
+              email,
+              password
+            );
+
+            if (fullName) {
+              await updateProfile(result.user, { displayName: fullName });
+            }
+
+            setToast('Account created successfully!');
+          }
+
+          setAuth('');
+          setAuthMessage('');
+        } catch (error) {
+          const messages = {
+            'auth/invalid-credential': 'Email or password is incorrect.',
+            'auth/email-already-in-use': 'This email is already registered. Try signing in.',
+            'auth/weak-password': 'Choose a stronger password (at least 6 characters).',
+            'auth/invalid-email': 'Please enter a valid email address.',
+            'auth/too-many-requests': 'Too many attempts. Please try again later.',
+            'auth/network-request-failed': 'Network error. Check your internet connection.',
+            'auth/operation-not-allowed': 'Email/password sign-in is not enabled in Firebase Authentication.',
+          };
+
+          setAuthMessage(
+            messages[error.code] || `Firebase error: ${error.code || error.message}`
+          );
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="modal-close"
+        onClick={() => {
+          setAuth('');
+          setAuthMessage('');
+        }}
+      >
+        <X />
+      </button>
+
+      <div className="auth-logo"><Leaf size={28} /></div>
+      <h2>{auth === 'signin' ? 'Welcome back' : 'Join EarthPulse AI'}</h2>
+      <p>
+        {auth === 'signin'
+          ? 'Sign in to your community workspace.'
+          : 'Create your EarthPulse AI account.'}
+      </p>
+
+      {auth === 'register' && (
+        <label>
+          Full name
+          <input name="fullName" required placeholder="Your name" autoComplete="name" />
+        </label>
+      )}
+
+      <label>
+        Email address
+        <input
+          name="email"
+          type="email"
+          required
+          placeholder="you@example.com"
+          autoComplete="email"
+        />
+      </label>
+
+      <label>
+        Password
+        <input
+          name="password"
+          type="password"
+          required
+          minLength={6}
+          placeholder="At least 6 characters"
+          autoComplete={auth === 'signin' ? 'current-password' : 'new-password'}
+        />
+      </label>
+
+      <button type="submit" className="primary-button auth-submit">
+        {auth === 'signin' ? <LogIn size={17} /> : <UserPlus size={17} />}
+        {auth === 'signin' ? 'Sign in' : 'Create account'}
+      </button>
+
+      {authMessage && <p className="auth-message" role="alert">{authMessage}</p>}
+
+      <small>
+        Your account is managed through Firebase Authentication.
+      </small>
+
+      <button
+        type="button"
+        className="switch-auth"
+        onClick={() => {
+          setAuth(auth === 'signin' ? 'register' : 'signin');
+          setAuthMessage('');
+        }}
+      >
+        {auth === 'signin'
+          ? 'New here? Create an account'
+          : 'Already registered? Sign in'}
+      </button>
+    </form>
+  </div>
+)}</div>
 }
